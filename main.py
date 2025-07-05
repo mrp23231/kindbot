@@ -1,4 +1,3 @@
-import json
 import logging
 import asyncio
 from aiogram import Bot, Dispatcher, executor, types
@@ -9,8 +8,10 @@ from aiogram.types import (
 from aiogram.dispatcher import FSMContext
 from aiogram.dispatcher.filters.state import State, StatesGroup
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
+
 from config import TOKEN
-from admin import notify_admin, ADMIN_ID
+from utils import load_data, save_data
+from admin import notify_admin  # теперь safe
 
 # Инициализация
 logging.basicConfig(level=logging.INFO)
@@ -18,34 +19,22 @@ bot = Bot(token=TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(bot, storage=storage)
 
-# Работа с JSON
-def load_data():
-    try:
-        with open("database.json", "r", encoding="utf-8") as f:
-            return json.load(f)
-    except:
-        return {"stories": []}
-
-def save_data(data):
-    with open("database.json", "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-
-# Клавиатура
+# Главное меню
 def main_menu():
     kb = ReplyKeyboardMarkup(resize_keyboard=True)
     kb.add("✍️ Поделиться историей")
     kb.add("📖 Читать истории", "🏆 Топ историй")
     return kb
 
-# Состояния
+# Состояние
 class StoryState(StatesGroup):
     waiting_for_text = State()
 
-# Команда /start
+# Старт
 @dp.message_handler(commands=['start'])
 async def start(message: types.Message):
     name = message.from_user.username or message.from_user.first_name or "друг"
-    await message.answer(f"Привет, {name}! Я здесь, чтобы поддержать тебя. Выбери действие 👇", reply_markup=main_menu())
+    await message.answer(f"Привет, {name}! Поделись вдохновляющей историей или почитай другие:", reply_markup=main_menu())
 
 # Поделиться историей
 @dp.message_handler(lambda m: m.text == "✍️ Поделиться историей")
@@ -117,7 +106,7 @@ async def story_buttons(callback: types.CallbackQuery):
     elif action == "next":
         await show_story(callback, approved, idx + 1)
 
-# Топ историй
+# Топ истории
 @dp.message_handler(lambda m: m.text == "🏆 Топ историй")
 async def top_stories(message: types.Message):
     data = load_data()
@@ -131,10 +120,9 @@ async def top_stories(message: types.Message):
         text += f"{i+1}. ❤️ {s['likes']} лайков\n{preview}\n\n"
     await message.answer(text)
 
-# Удаляем webhook при запуске
+# Запуск
 if __name__ == '__main__':
     async def on_startup():
         await bot.delete_webhook(drop_pending_updates=True)
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(on_startup())
+    asyncio.run(on_startup())
     executor.start_polling(dp, skip_updates=True)
