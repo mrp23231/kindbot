@@ -1,36 +1,27 @@
 import logging
 import asyncio
-from aiogram import Bot, Dispatcher, executor, types
-from aiogram.types import (
-    ReplyKeyboardMarkup, KeyboardButton,
-    InlineKeyboardMarkup, InlineKeyboardButton
-)
+from aiogram import types
 from aiogram.dispatcher import FSMContext
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.dispatcher.filters.state import State, StatesGroup
-from aiogram.contrib.fsm_storage.memory import MemoryStorage
+from aiogram.utils import executor
 
+from bot_init import bot, dp
 from config import TOKEN
 from utils import load_data, save_data
-from admin import notify_admin  # теперь safe
+from admin import notify_admin
 
-# Инициализация
-logging.basicConfig(level=logging.INFO)
-bot = Bot(token=TOKEN)
-storage = MemoryStorage()
-dp = Dispatcher(bot, storage=storage)
-
-# Главное меню
+# Меню
 def main_menu():
     kb = ReplyKeyboardMarkup(resize_keyboard=True)
     kb.add("✍️ Поделиться историей")
     kb.add("📖 Читать истории", "🏆 Топ историй")
     return kb
 
-# Состояние
+# Состояния
 class StoryState(StatesGroup):
     waiting_for_text = State()
 
-# Старт
 @dp.message_handler(commands=['start'])
 async def start(message: types.Message):
     name = message.from_user.username or message.from_user.first_name or "друг"
@@ -122,7 +113,6 @@ async def top_stories(message: types.Message):
 
 # Запуск
 if __name__ == '__main__':
-    async def on_startup():
-        await bot.delete_webhook(drop_pending_updates=True)
-    asyncio.run(on_startup())
+    logging.basicConfig(level=logging.INFO)
+    asyncio.run(bot.delete_webhook(drop_pending_updates=True))
     executor.start_polling(dp, skip_updates=True)
