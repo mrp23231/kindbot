@@ -2,7 +2,7 @@ from aiogram import types
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from config import ADMIN_ID
 from utils import load_data, save_data
-from main import bot, dp
+from bot_init import bot, dp  # ✅ заменили импорт
 
 def moderation_markup(index):
     return InlineKeyboardMarkup(inline_keyboard=[
