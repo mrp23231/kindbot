@@ -4,10 +4,9 @@ from aiogram import types
 from aiogram.dispatcher import FSMContext
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.dispatcher.filters.state import State, StatesGroup
-from aiogram.utils import executor
+from aiogram.utils.executor import start_polling
 
 from bot_init import bot, dp
-from config import TOKEN
 from utils import load_data, save_data
 from admin import notify_admin
 
@@ -112,7 +111,12 @@ async def top_stories(message: types.Message):
     await message.answer(text)
 
 # Запуск
-if __name__ == '__main__':
+def main():
     logging.basicConfig(level=logging.INFO)
-    asyncio.run(bot.delete_webhook(drop_pending_updates=True))
-    executor.start_polling(dp, skip_updates=True)
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(bot.delete_webhook(drop_pending_updates=True))
+    start_polling(dp, skip_updates=True)
+
+if __name__ == '__main__':
+    main()
