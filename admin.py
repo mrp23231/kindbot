@@ -35,13 +35,21 @@ async def handle_moderation(callback: types.CallbackQuery):
 
     if action == "approve":
         story["approved"] = True
-        await callback.message.edit_reply_markup()  # удаляем кнопки
+        await callback.message.edit_reply_markup()
         await callback.answer("История одобрена ✅")
         await callback.message.edit_text("✅ История одобрена и будет отображаться в боте.")
+        try:
+            await bot.send_message(story["user_id"], "🎉 Твоя история одобрена и уже видна всем в боте!")
+        except:
+            pass
 
     elif action == "reject":
-        data["stories"][story_id]["rejected"] = True  # просто помечаем как отклонённую
+        story["rejected"] = True
         await callback.answer("История отклонена ❌")
         await callback.message.edit_text("❌ История была отклонена и не будет опубликована.")
+        try:
+            await bot.send_message(story["user_id"], "К сожалению, твоя история была отклонена. Попробуй ещё раз с соблюдением правил.")
+        except:
+            pass
 
     save_data(data)
