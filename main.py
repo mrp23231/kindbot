@@ -1,5 +1,4 @@
 import logging
-import asyncio
 from aiogram import types
 from aiogram.dispatcher import FSMContext
 from aiogram.dispatcher.filters.state import State, StatesGroup
@@ -125,11 +124,4 @@ async def top_stories(message: types.Message):
 # Запуск бота
 if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO)
-
-    async def main():
-        await bot.delete_webhook(drop_pending_updates=True)
-        start_polling(dp, skip_updates=True)
-
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(main())
+    start_polling(dp, skip_updates=True)
