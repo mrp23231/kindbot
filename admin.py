@@ -1,57 +1,54 @@
 from aiogram import types, Dispatcher
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from utils import load_data, save_data
+from aiogram.dispatcher import FSMContext
 
 ADMIN_ID = 5050707973
 STICKER_ID = "CAACAgQAAxkBAAEQqhRodkFgIxuOVo8U7SR54jNPXc4u8wAC-RcAApegmFO3ic78vJPsijYE"
 
-async def notify_admin(bot, text, story_idx, username, user_id):
-    kb = InlineKeyboardMarkup()
-    kb.add(
-        InlineKeyboardButton("✅ Одобрить", callback_data=f"approve_{story_idx}"),
-        InlineKeyboardButton("❌ Отклонить", callback_data=f"decline_{story_idx}")
-    )
-    await bot.send_message(ADMIN_ID,
-        f"📝 Новая история от @{username} (ID: {user_id}):\n\n{text}",
-        reply_markup=kb
-    )
+def admin_keyboard():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton("👑 Назначить Автора недели", callback_data="set_author_week")],
+        [InlineKeyboardButton("📋 Правила", callback_data="show_rules")]
+    ])
 
-def register_admin_callbacks(dp: Dispatcher):
-    @dp.callback_query_handler(lambda c: c.data.startswith(("approve_", "decline_")))
-    async def on_moderation(c: types.CallbackQuery):
-        from main import bot, send_new_story_notifications  # локальный импорт, чтобы избежать циклов
+async def notify_admin(text, index, username, user_id, bot):
+    markup = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton("✅ Одобрить", callback_data=f"approve_{index}"),
+            InlineKeyboardButton("❌ Отклонить", callback_data=f"reject_{index}")
+        ]
+    ])
+    await bot.send_message(ADMIN_ID, f"Новая история от @{username or user_id} (ID: {user_id}):\n\n{text}", reply_markup=markup)
+
+async def register_admin_callbacks(message, bot):
+    await message.answer("👮 Админ-панель", reply_markup=admin_keyboard())
+
+def setup_admin_callbacks(dp: Dispatcher):
+    @dp.callback_query_handler(lambda c: c.data.startswith("approve_") or c.data.startswith("reject_"))
+    async def moderate_story(callback: types.CallbackQuery):
+        from main import load_data, save_data
         data = load_data()
-        idx = int(c.data.split("_")[1])
+        idx = int(callback.data.split("_")[1])
         story = data["stories"][idx]
-        uid = story["user_id"]
-        if c.data.startswith("approve_"):
+        author_id = story["user_id"]
+
+        if callback.data.startswith("approve_"):
             story["approved"] = True
             save_data(data)
-            await bot.send_sticker(uid, STICKER_ID)
-            await bot.send_message(uid, "🎉 Твоя история одобрена и уже видна всем в боте!")
-            await send_new_story_notifications(data, story)
-            await c.message.edit_text("✅ История одобрена!")
+            await callback.bot.send_message(author_id, "🎉 Твоя история одобрена и уже видна всем в боте!")
+            await callback.bot.send_sticker(author_id, STICKER_ID)
+            await callback.answer("История одобрена ✅")
         else:
-            await bot.send_message(uid, "❌ К сожалению, твоя история была отклонена. Попробуй ещё раз с соблюдением правил.")
-            await c.message.edit_text("🗑 История отклонена.")
+            data["stories"].pop(idx)
+            save_data(data)
+            await callback.bot.send_message(author_id, "😔 К сожалению, твоя история была отклонена. Попробуй ещё раз с соблюдением правил.")
+            await callback.answer("История отклонена ❌")
 
-    @dp.callback_query_handler(lambda c: c.data == "rules")
-    async def on_rules(c: types.CallbackQuery):
-        await c.message.edit_text(
-            "📋 <b>Правила публикации историй:</b>\n\n"
-            "1. История должна быть доброй, светлой и искренней.\n"
-            "2. Без оскорблений, негатива, мата или рекламы.\n"
-            "3. Только авторский текст, минимум 20 символов.\n"
-            "4. Истории проходят ручную модерацию.\n"
-            "\nСпасибо за добрые поступки! ❤️", parse_mode="HTML"
-        )
+    @dp.callback_query_handler(lambda c: c.data == "show_rules")
+    async def show_rules(callback: types.CallbackQuery):
+        await callback.answer()
+        await callback.message.answer("📋 Правила публикации:\n\n— История должна быть доброй\n— Не менее 20 символов\n— Без спама и рекламы")
 
-    @dp.message_handler(commands=["admin"])
-    async def on_admin(m: types.Message):
-        if m.from_user.id != ADMIN_ID:
-            await m.reply("⛔ У тебя нет доступа к админке.")
-            return
-        kb = InlineKeyboardMarkup().add(
-            InlineKeyboardButton("📋 Правила / О боте", callback_data="rules")
-        )
-        await m.answer("🔧 Админ-панель активна.", reply_markup=kb)
+    @dp.callback_query_handler(lambda c: c.data == "set_author_week")
+    async def set_author(callback: types.CallbackQuery):
+        await callback.answer("⚙️ Функция назначения пока в разработке.")
