@@ -1,51 +1,31 @@
 import json
-import os
-
-DATA_FILE = "database.json"
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 
 def load_data():
-    if not os.path.exists(DATA_FILE):
-        return {"stories": [], "users": {}, "subscriptions": {}, "thanks": {}, "author_of_week": None}
-    with open(DATA_FILE, "r", encoding="utf-8") as f:
-        return json.load(f)
+    try:
+        with open("database.json", "r", encoding="utf-8") as f:
+            return json.load(f)
+    except:
+        return {"users": {}, "stories": [], "subscriptions": {}}
 
 def save_data(data):
-    with open(DATA_FILE, "w", encoding="utf-8") as f:
+    with open("database.json", "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
-def get_user(data, user_id):
-    user_id = str(user_id)
-    if "users" not in data:
-        data["users"] = {}
-    if user_id not in data["users"]:
-        data["users"][user_id] = {
-            "points": 0,
-            "thanks": 0,
-            "badge": "",
-            "username": "",
-        }
-    return data["users"][user_id]
+def get_user(data, uid, username=None):
+    key = str(uid)
+    users = data.setdefault("users", {})
+    if key not in users:
+        users[key] = {"username": username or f"user{uid}", "points": 0, "thanks": 0}
+    return users[key]
 
-def update_user_points(data, user_id, delta):
-    user = get_user(data, user_id)
-    user["points"] += delta
+def get_badge(user, uid, data):
+    return "✨ Автор недели" if str(uid) in data.get("author_of_week", []) else None
 
-def add_thanks(data, to_user_id, from_user_id, story_index):
-    key = f"{story_index}_{from_user_id}"
-    if key in data.get("thanks", {}):
-        return False  # Уже благодарил
-    data.setdefault("thanks", {})[key] = to_user_id
-    user = get_user(data, to_user_id)
-    user["thanks"] += 1
-    update_user_points(data, to_user_id, 1)
-    return True
-
-def get_badge(user, user_id, data):
-    badge = ""
-    if str(user_id) == str(data.get("author_of_week")):
-        badge = "🥇 Автор недели"
-    elif user["thanks"] >= 10:
-        badge = "🙏 Душа компании"
-    elif user["points"] >= 20:
-        badge = "💡 Мотиватор"
-    return badge
+def main_menu():
+    kb = ReplyKeyboardMarkup(resize_keyboard=True)
+    kb.add(KeyboardButton("📖 Читать истории"))
+    kb.add(KeyboardButton("✍️ Поделиться историей"))
+    kb.add(KeyboardButton("👤 Профиль"))
+    kb.add(KeyboardButton("🧱 Стена благодарности"))
+    return kb
