@@ -1,202 +1,176 @@
 import logging
-from aiogram import types
+from aiogram import Bot, Dispatcher, types
+from aiogram.contrib.fsm_storage.memory import MemoryStorage
 from aiogram.dispatcher import FSMContext
 from aiogram.dispatcher.filters.state import State, StatesGroup
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
-from aiogram.utils.executor import start_polling
 
-from bot_init import bot, dp
-from utils import load_data, save_data, get_user, update_user_points
-from admin import notify_admin
+from admin import notify_admin, register_admin_callbacks
+from utils import load_data, save_data, get_user, get_badge, main_menu
 
-# Главное меню
-def main_menu():
-    kb = ReplyKeyboardMarkup(resize_keyboard=True)
-    kb.add("✍️ Поделиться историей", "📖 Читать истории")
-    kb.add("🏆 Топ историй", "🧑‍💼 Профиль")
-    kb.add("ℹ️ О боте")
-    return kb
+API_TOKEN = "8148757569:AAFOJAh97I9YKktYPT76_JO_M8khUdWnwcw"  # ← вставь токен
 
-# Состояние
+bot = Bot(token=API_TOKEN)
+storage = MemoryStorage()
+dp = Dispatcher(bot, storage=storage)
+
+
 class StoryState(StatesGroup):
     waiting_for_text = State()
 
-# /start
+
 @dp.message_handler(commands=["start"])
-async def start(message: types.Message):
-    user_data = load_data()
-    user = get_user(user_data, message.from_user.id)
-    save_data(user_data)
+async def cmd_start(message: types.Message):
+    data = load_data()
+    get_user(data, message.from_user.id, message.from_user.username)
+    save_data(data)
+    await message.answer("👋 Добро пожаловать в KindBot — мини‑сеть добрых историй!", reply_markup=main_menu())
 
-    name = message.from_user.first_name or "друг"
-    await message.answer(
-        f"👋 Привет, {name}!\n\n"
-        "Поделись своей вдохновляющей историей или почитай другие истории 🌟",
-        reply_markup=main_menu()
-    )
 
-# Написать историю
 @dp.message_handler(lambda m: m.text == "✍️ Поделиться историей")
-async def ask_story(message: types.Message):
-    await message.answer("✍️ Напиши свою добрую или вдохновляющую историю.\nПосле отправки она пройдёт модерацию 🕊️")
+async def cmd_share(message: types.Message):
+    await message.answer("📝 Напиши вдохновляющую историю. После модерации она будет опубликована!")
     await StoryState.waiting_for_text.set()
 
+
 @dp.message_handler(state=StoryState.waiting_for_text)
-async def receive_story(message: types.Message, state: FSMContext):
+async def on_share(message: types.Message, state: FSMContext):
     text = message.text.strip()
     if len(text) < 20:
-        await message.answer("📏 История слишком короткая. Попробуй написать подробнее.")
+        await message.answer("📏 История слишком короткая. Напиши подробнее.")
         return
-
     data = load_data()
-
     story = {
         "text": text,
         "likes": 0,
+        "thanks": 0,
         "user_id": message.from_user.id,
         "approved": False,
         "liked_by": [],
-        "rejected": False
+        "thanked_by": []
     }
-
     data["stories"].append(story)
-    story_id = len(data["stories"]) - 1
-
-    # Обновим пользователя
-    user = get_user(data, message.from_user.id)
-    user["submitted"] += 1
+    idx = len(data["stories"]) - 1
     save_data(data)
-
-    await notify_admin(text, story_id, message.from_user.username, message.from_user.id)
-
-    await message.answer("⏳ История отправлена на модерацию!\nОжидай публикации 🙌", reply_markup=main_menu())
+    await notify_admin(bot, text, idx, message.from_user.username, message.from_user.id)
+    await message.answer("✨ История отправлена на модерацию. Спасибо за доброту!", reply_markup=main_menu())
     await state.finish()
 
-# Читать истории
+
+def make_story_markup(idx, story, viewer_id, data):
+    liked = viewer_id in story["liked_by"]
+    thanked = viewer_id in story["thanked_by"]
+    subbed = str(viewer_id) in data.get("subscriptions", {}) and str(story["user_id"]) in data["subscriptions"][str(viewer_id)]
+    kb = types.InlineKeyboardMarkup()
+    kb.add(types.InlineKeyboardButton("❤️ Лайк", callback_data=f"like_{idx}"))
+    kb.add(types.InlineKeyboardButton("🙏 Спасибо", callback_data=f"thank_{idx}"))
+    kb.add(types.InlineKeyboardButton("🔔 Подписаться" if not subbed else "🔕 Отписаться", callback_data=f"sub_{story['user_id']}"))
+    kb.add(types.InlineKeyboardButton("➡️ Следующая", callback_data=f"next_{idx}"))
+    return kb
+
+
 @dp.message_handler(lambda m: m.text == "📖 Читать истории")
-async def read_stories(message: types.Message):
+async def cmd_read(message: types.Message):
     data = load_data()
-    approved = [s for s in data["stories"] if s["approved"] and not s.get("rejected")]
+    approved = [s for s in data["stories"] if s["approved"]]
     if not approved:
-        await message.answer("😕 Пока нет одобренных историй.")
+        await message.answer("😔 Пока нет историй.")
         return
-    await show_story(message, approved, 0)
+    story = approved[0]
+    markup = make_story_markup(0, story, message.from_user.id, data)
+    await message.answer(story["text"], reply_markup=markup)
 
-def story_markup(index):
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton("❤️ Лайк", callback_data=f"like_{index}")],
-        [InlineKeyboardButton("➡️ Следующая", callback_data=f"next_{index}")]
-    ])
 
-async def show_story(msg, stories, index):
-    if index >= len(stories):
-        await msg.answer("📚 Больше историй нет.", reply_markup=main_menu())
-        return
-
-    story = stories[index]
-    preview = story["text"][:4096]
-    markup = story_markup(index)
-
-    if isinstance(msg, types.CallbackQuery):
-        await msg.message.edit_text(preview, reply_markup=markup)
-    else:
-        await msg.answer(preview, reply_markup=markup)
-
-@dp.callback_query_handler(lambda c: c.data.startswith("like_") or c.data.startswith("next_"))
-async def handle_buttons(callback: types.CallbackQuery):
-    action, idx = callback.data.split("_")
-    idx = int(idx)
+@dp.callback_query_handler(lambda c: c.data.startswith(("like_", "thank_", "sub_", "next_")))
+async def cq_actions(c: types.CallbackQuery):
     data = load_data()
-    approved = [s for s in data["stories"] if s["approved"] and not s.get("rejected")]
+    parts = c.data.split("_")
+    action = parts[0]
+    viewer = c.from_user.id
 
-    if idx >= len(approved):
-        await callback.answer("Ошибка: история не найдена.")
-        return
+    if action in ("like", "thank", "next"):
+        idx = int(parts[1])
+        story = [s for s in data["stories"] if s["approved"]][idx]
+        global_idx = data["stories"].index(story)
+        if action == "like":
+            if viewer in story["liked_by"]:
+                await c.answer("✅ Уже лайкал", show_alert=True)
+            else:
+                story["likes"] += 1
+                story["liked_by"].append(viewer)
+                save_data(data)
+                await c.answer("❤️ Спасибо за лайк!")
+        elif action == "thank":
+            if viewer in story["thanked_by"]:
+                await c.answer("✅ Уже отправлял спасибо", show_alert=True)
+            else:
+                story["thanks"] += 1
+                story["thanked_by"].append(viewer)
+                data["users"][str(story["user_id"])]["points"] += 1
+                data["users"][str(story["user_id"])]["thanks"] += 1
+                save_data(data)
+                await c.answer("🙏 Спасибо отправлено!")
+        elif action == "next":
+            await cmd_read(c.message)
 
-    story = approved[idx]
-    full_list = data["stories"]
-    real_index = full_list.index(story)
+        # обновляем сообщение
+        data = load_data()
+        story = [s for s in data["stories"] if s["approved"]][idx]
+        markup = make_story_markup(idx, story, viewer, data)
+        await c.message.edit_text(story["text"], reply_markup=markup)
 
-    if action == "like":
-        if callback.from_user.id in story["liked_by"]:
-            await callback.answer("Ты уже лайкал(а) эту историю 💡", show_alert=True)
-            return
-
-        story["likes"] += 1
-        story["liked_by"].append(callback.from_user.id)
-
-        # Обновим очки пользователя
-        user = get_user(data, callback.from_user.id)
-        user["likes_given"] += 1
-        update_user_points(user, +1)
-
+    elif action == "sub":
+        author = parts[1]
+        subs = data.setdefault("subscriptions", {})
+        subs.setdefault(str(viewer), [])
+        if author in subs[str(viewer)]:
+            subs[str(viewer)].remove(author)
+            await c.answer("🔕 Отписался")
+        else:
+            subs[str(viewer)].append(author)
+            await c.answer("🔔 Подписка оформлена")
         save_data(data)
-        await callback.answer("❤️ Спасибо за лайк!")
-        await show_story(callback, approved, idx)
+        # не обновляем текст
 
-    elif action == "next":
-        await show_story(callback, approved, idx + 1)
-
-# Топ историй
-@dp.message_handler(lambda m: m.text == "🏆 Топ историй")
-async def top_stories(message: types.Message):
+@dp.message_handler(lambda m: m.text == "👤 Профиль")
+async def cmd_profile(m: types.Message):
     data = load_data()
-    top = sorted(
-        [s for s in data["stories"] if s["approved"] and not s.get("rejected")],
-        key=lambda x: x["likes"], reverse=True
-    )[:3]
+    user = get_user(data, m.from_user.id)
+    badge = get_badge(user, m.from_user.id, data)
+    text = (f"👤 Профиль @{user['username']}\n"
+            f"✨ Очки доброты: {user['points']}\n"
+            f"🙏 Спасибо получено: {user['thanks']}\n"
+            f"🏅 Бейдж: {badge or '—'}")
+    await m.answer(text)
 
-    if not top:
-        await message.answer("😕 Пока нет популярных историй.")
+@dp.message_handler(lambda m: m.text == "🧱 Стена благодарности")
+async def cmd_wall(m: types.Message):
+    data = load_data()
+    tops = sorted(data["users"].values(), key=lambda u: u["thanks"], reverse=True)[:5]
+    if not tops:
+        await m.answer("Пока никто не получил «Спасибо»")
         return
+    text = "🧱 Стена благодарности:\n\n"
+    for u in tops:
+        text += f"@{u['username']} — 🙏 {u['thanks']}\n"
+    await m.answer(text)
 
-    text = "🏆 <b>Топ историй недели:</b>\n\n"
-    for i, s in enumerate(top):
-        preview = s["text"][:150] + "..." if len(s["text"]) > 150 else s["text"]
-        text += f"{i+1}. ❤️ {s['likes']} лайков\n{preview}\n\n"
+@dp.message_handler(commands=["admin"])
+async def cmd_admin(m: types.Message):
+    await register_admin_callbacks(dp)  # регистрируем, если не сделано
+    await types.Chat(id=m.chat.id).send_message("🔧 Админ-панель активирована")
 
-    await message.answer(text, parse_mode="HTML")
+async def send_new_story_notifications(data, story):
+    author = str(story["user_id"])
+    for u, subs in data.get("subscriptions", {}).items():
+        if author in subs:
+            keyboard = types.InlineKeyboardMarkup().add(
+                types.InlineKeyboardButton("📖 Открыть историю", callback_data=f"open_{data['stories'].index(story)}")
+            )
+            await bot.send_message(int(u), f"🔔 @{data['users'][author]['username']} опубликовал новую историю!", reply_markup=keyboard)
 
-# Профиль
-@dp.message_handler(lambda m: m.text == "🧑‍💼 Профиль")
-async def profile(message: types.Message):
-    data = load_data()
-    user = get_user(data, message.from_user.id)
+register_admin_callbacks(dp)
 
-    points = user["kindness_points"]
-    if points >= 50:
-        rank = "🥇 Золото"
-    elif points >= 20:
-        rank = "🥈 Серебро"
-    else:
-        rank = "🥉 Бронза"
-
-    text = (
-        f"👤 <b>Профиль:</b>\n"
-        f"🏅 Ранг: {rank}\n"
-        f"❤️ Поставлено лайков: {user['likes_given']}\n"
-        f"📝 Отправлено историй: {user['submitted']}\n"
-        f"🌟 Очки доброты: {points}"
-    )
-    await message.answer(text, parse_mode="HTML")
-
-# О боте
-@dp.message_handler(lambda m: m.text == "ℹ️ О боте")
-async def about_bot(message: types.Message):
-    await message.answer(
-        "🤖 Этот бот создан для того, чтобы делиться вдохновляющими и добрыми историями 🕊️\n\n"
-        "👥 Истории проходят модерацию\n"
-        "🏆 Истории с наибольшим количеством лайков попадают в топ недели\n"
-        "📊 Вы зарабатываете очки доброты, ставя лайки\n\n"
-        "⚠️ <b>Правила:</b>\n"
-        "— Без мата\n"
-        "— Без рекламы\n"
-        "— Без агрессии\n\n"
-        "Разработано с ❤️ специально для душевных людей.",
-        parse_mode="HTML"
-    )
-
-# Запуск бота
-if __name__ == '__main__':
+if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
-    start_polling(dp, skip_updates=True)
+    from aiogram import executor
+    executor.start_polling(dp, skip_updates=True)
