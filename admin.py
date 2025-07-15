@@ -1,55 +1,42 @@
 from aiogram import types
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from bot_init import bot, dp
 from utils import load_data, save_data
 
-ADMIN_ID = 5050707973  # ← замените на свой Telegram ID
+ADMIN_ID = 5050707973
+STICKER_ID = "CAACAgQAAxkBAAEQqhRodkFgIxuOVo8U7SR54jNPXc4u8wAC-RcAApegmFO3ic78vJPsijYE"
 
-# Отправка истории админу с кнопками одобрения/отклонения
-async def notify_admin(text, story_id, username, user_id):
-    markup = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton("✅ Одобрить", callback_data=f"approve_{story_id}"),
-            InlineKeyboardButton("❌ Отклонить", callback_data=f"reject_{story_id}")
-        ]
-    ])
-    preview = text[:4096]
-    await bot.send_message(
-        chat_id=ADMIN_ID,
-        text=f"📝 Новая история от @{username or 'пользователь'} (ID: {user_id}):\n\n{preview}",
-        reply_markup=markup
-    )
+def register_admin_callbacks(dp: types.Dispatcher):
+    @dp.callback_query_handler(lambda c: c.data.startswith(("approve_", "decline_")))
+    async def on_moderation(c: types.CallbackQuery):
+        data = load_data()
+        idx = int(c.data.split("_")[1])
+        story = data["stories"][idx]
+        uid = story["user_id"]
+        if c.data.startswith("approve_"):
+            story["approved"] = True
+            save_data(data)
+            await bot.send_sticker(uid, STICKER_ID)
+            await bot.send_message(uid, "🎉 Твоя история одобрена и уже видна всем!")
+            await send_new_story_notifications(data, story)
+            await c.message.edit_text("✅ История одобрена!")
+        else:
+            save_data(data)
+            await bot.send_message(uid, "❌ К сожалению, твоя история отклонена.")
+            await c.message.edit_text("🗑 История отклонена.")
 
-# Обработка кнопок модерации
-@dp.callback_query_handler(lambda c: c.data.startswith("approve_") or c.data.startswith("reject_"))
-async def handle_moderation(callback: types.CallbackQuery):
-    action, story_id = callback.data.split("_")
-    story_id = int(story_id)
+    @dp.callback_query_handler(lambda c: c.data == "rules")
+    async def on_rules(c: types.CallbackQuery):
+        await c.message.edit_text(
+            "📋 Правила публикации:\n"
+            "1. Только добрые истории.\n"
+            "2. Без мата, рекламы, агрессии.\n"
+            "3. Пиши от души."
+        )
 
-    data = load_data()
-    if story_id >= len(data["stories"]):
-        await callback.answer("История не найдена.")
-        return
-
-    story = data["stories"][story_id]
-
-    if action == "approve":
-        story["approved"] = True
-        await callback.message.edit_reply_markup()
-        await callback.answer("История одобрена ✅")
-        await callback.message.edit_text("✅ История одобрена и будет отображаться в боте.")
-        try:
-            await bot.send_message(story["user_id"], "🎉 Твоя история одобрена и уже видна всем в боте!")
-        except:
-            pass
-
-    elif action == "reject":
-        story["rejected"] = True
-        await callback.answer("История отклонена ❌")
-        await callback.message.edit_text("❌ История была отклонена и не будет опубликована.")
-        try:
-            await bot.send_message(story["user_id"], "К сожалению, твоя история была отклонена. Попробуй ещё раз с соблюдением правил.")
-        except:
-            pass
-
-    save_data(data)
+    @dp.message_handler(commands=["admin"])
+    async def on_admin(m: types.Message):
+        if m.from_user.id != ADMIN_ID:
+            await m.reply("⛔ Нет доступа.")
+            return
+        kb = InlineKeyboardMarkup().add(InlineKeyboardButton("📋 Правила / О боте", callback_data="rules"))
+        await m.answer("🔧 Админ-панель", reply_markup=kb)
